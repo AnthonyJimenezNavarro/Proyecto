@@ -3,6 +3,11 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 #from scipy.stats import zscore
+import lightgbm as lgb
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix
+from lightgbm import early_stopping, log_evaluation
 
 # Cargar datos
 data = 'data/ObesityDataSet_raw_and_data_sinthetic.xlsx'
@@ -99,11 +104,60 @@ for var in variables_cuantitativas:
 #df['z_weight'] = zscore(df['Weight'])
 #outliers = df[df['z_weight'].abs() > 3]
 
+# Variables predictoras y objetivo
+objetivo = 'NObeyesdad'
+X = df.drop(columns=[objetivo])
+y = df[objetivo]
 
+# Para variables categoricas
+cat_cols = X.select_dtypes(include='object').columns
+for col in cat_cols:
+    le = LabelEncoder()
+    X[col] = le.fit_transform(X[col])
 
+# Label para variable objetivo
+le_objetivo = LabelEncoder()
+y_encoded = le_objetivo.fit_transform(y)
 
+# Dividir dataset en train y test
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+)
 
+# Modelo LGBMClassifier 
+clf = lgb.LGBMClassifier(
+    objective='multiclass',
+    num_class=len(le_objetivo.classes_),
+    learning_rate=0.05,
+    num_leaves=31,
+    n_estimators=100
+)
 
+# Entrenando el modelo con Callbacks
+clf.fit(
+    X_train, y_train,
+    eval_set=[(X_test, y_test)],
+    eval_metric='multi_logloss',
+    callbacks=[
+        early_stopping(stopping_rounds=10),
+        log_evaluation(period=0)
+    ]
+)
 
+# Predicción
+y_pred_labels = clf.predict(X_test)
 
+# Evaluación
+print("Reporte de Clasificación:\n", classification_report(y_test, y_pred_labels, objetivo_names=le_objetivo.classes_))
+print("Matriz de Confusión:\n", confusion_matrix(y_test, y_pred_labels))
 
+# Importancia de variables
+feature_importance = pd.Series(clf.feature_importances_, index=X.columns).sort_values(ascending=False)
+
+plt.figure(figsize=(10, 6))
+sns.barplot(x=feature_importance.values, y=feature_importance.index)
+plt.title('Importancia de variables según LightGBM')
+plt.xlabel('Importancia')
+plt.ylabel('Variable')
+plt.tight_layout()
+plt.show()
